@@ -350,7 +350,3 @@ This project is for IoT environmental monitoring and educational purposes.
 ## 👤 Author
 
 Created by: Suman-Gayen
-
----
-
-**Last Updated**: March 19, 2026

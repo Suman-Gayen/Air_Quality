@@ -5,13 +5,13 @@ import requests as rq
 import time
 import dht
 
-dht_sensor = dht.DHT11(Pin(13))
+dht_value = dht.DHT11(Pin(12))
 buzzer_pin = Pin(14, Pin.OUT)
 
 def dht_data():
-    dht_sensor.measure() 
-    temp = dht_sensor.temperature()
-    hum = dht_sensor.humidity()
+    dht_value.measure() 
+    temp = dht_value.temperature()
+    hum = dht_value.humidity()
     temp_f = temp * (9/5) + 32.0
     sleep(1)
     if temp > 30 or (hum > 90 or hum < 30):

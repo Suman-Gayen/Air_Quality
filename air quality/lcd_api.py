@@ -1,5 +1,5 @@
-"""Provides an API for talking to HD44780 compatible character LCDs."""
-
+# Provides an API for talking to HD44780 compatible character LCDs.
+# https://github.com/dhylands/python_lcd/tree/master/lcd
 import time
 
 class LcdApi:
@@ -140,7 +140,7 @@ class LcdApi:
             if self.implied_newline:
                 # self.implied_newline means we advanced due to a wraparound,
                 # so if we get a newline right after that we ignore it.
-                pass
+                self.implied_newline = False
             else:
                 self.cursor_x = self.num_columns
         else:
@@ -203,6 +203,10 @@ class LcdApi:
         """
         raise NotImplementedError
 
+    # This is a default implementation of hal_sleep_us which is suitable
+    # for most micropython implementations. For platforms which don't
+    # support `time.sleep_us()` they should provide their own implementation
+    # of hal_sleep_us in their hal layer and it will be used instead.
     def hal_sleep_us(self, usecs):
         """Sleep for some time (given in microseconds)."""
-        time.sleep_us(usecs)
+        time.sleep_us(usecs)  # NOTE this is not part of Standard Python library, specific hal layers will need to override this

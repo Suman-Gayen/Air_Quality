@@ -1,352 +1,513 @@
-# Air Quality Monitoring System
+# 🌫️ ESP32 Air Quality & Environmental Monitoring System
 
-A MicroPython-based IoT project that monitors air quality, temperature, and humidity using ESP32/ESP8266 microcontroller, displays data on an I2C LCD screen, and uploads readings to Firebase in real-time.
+A MicroPython-based IoT project that monitors **air quality**, **temperature**, and **humidity** in real time using an ESP32/ESP8266 microcontroller. Sensor data is displayed on an I²C LCD, pushed to a Firebase Realtime Database, and emailed automatically.
 
-## 📋 Project Overview
+---
 
-This project integrates multiple sensors and displays to create a comprehensive environmental monitoring system:
-- **Temperature & Humidity Sensor (DHT11)**: Measures ambient temperature and humidity
-- **Air Quality Sensor (MQ-135)**: Detects air quality levels
-- **I2C LCD Display (16x2)**: Shows real-time sensor readings
-- **Buzzer Alert**: Alerts when temperature or humidity reaches abnormal levels
-- **Cloud Integration**: Sends data to Firebase Realtime Database
+## 📋 Table of Contents
 
-## 📁 File Documentation
+- [Overview](#overview)
+- [Features](#features)
+- [Hardware Requirements](#hardware-requirements)
+- [Software Requirements](#software-requirements)
+- [Project Structure](#project-structure)
+- [Module Documentation](#module-documentation)
+  - [air\_quality.py](#air_qualitypy)
+  - [DHT11.py](#dht11py)
+  - [connection.py](#connectionpy)
+  - [umail.py](#umailpy)
+  - [fire\_test.py](#fire_testpy)
+- [Circuit Connections](#circuit-connections)
+- [Configuration](#configuration)
+- [Firebase Setup](#firebase-setup)
+- [Email Setup](#email-setup)
+- [How It Works](#how-it-works)
+- [Data Format](#data-format)
+- [Alerts & Thresholds](#alerts--thresholds)
+- [Known Issues & Limitations](#known-issues--limitations)
+- [License](#license)
 
-### 1. **fire_test.py** (Main Application)
-**Purpose**: The main entry point of the application that orchestrates all system components.
+---
 
-**Key Features**:
-- Initializes all sensors and display modules
-- Continuously reads sensor data
-- Displays data on LCD screen
-- Sends data to Firebase at regular intervals
-- Implements timing controls between data uploads
+## Overview
 
-**Hardware Configuration**:
+This project turns an ESP32 (or ESP8266) microcontroller into a full environmental monitoring node. Every cycle it:
+
+1. Reads gas/air-quality level from an analog MQ-series sensor.
+2. Reads temperature and humidity from a DHT11 sensor.
+3. Shows the readings on a 16×2 I²C LCD.
+4. Uploads the data to Google Firebase Realtime Database.
+5. Sends a summary email via Gmail SMTP.
+6. Triggers a buzzer when readings cross critical thresholds.
+
+---
+
+## Features
+
+| Feature | Details |
+|---|---|
+| 🌡️ Temperature monitoring | Celsius and Fahrenheit |
+| 💧 Humidity monitoring | Percentage (%) |
+| 💨 Air / Gas quality | Percentage (0–100%) |
+| 📟 LCD display | Real-time 16×2 I²C output |
+| ☁️ Cloud upload | Firebase Realtime Database |
+| 📧 Email alerts | Via Gmail SMTP (SSL) |
+| 🔔 Buzzer alert | Triggered on threshold breach |
+| 📶 Wi-Fi connectivity | Auto-reconnect on boot |
+
+---
+
+## Hardware Requirements
+
+| Component | Quantity | Notes |
+|---|---|---|
+| ESP32 or ESP8266 | 1 | Primary microcontroller |
+| DHT11 sensor | 1 | Temperature & humidity |
+| MQ-series gas sensor (analog) | 1 | Air / gas quality |
+| Active buzzer | 1 | Alert output |
+| 16×2 I²C LCD (PCF8574 backpack) | 1 | Address `0x27` |
+| Jumper wires | Several | For connections |
+| Breadboard | 1 | Optional |
+| 3.3V / 5V power supply | 1 | Per board requirements |
+
+---
+
+## Software Requirements
+
+- [MicroPython](https://micropython.org/download/) firmware flashed on ESP32/ESP8266
+- The following MicroPython libraries must be present on the device:
+
+| Library | Purpose | Source |
+|---|---|---|
+| `dht` | DHT11 sensor driver | Built into MicroPython |
+| `machine` | GPIO, ADC, I²C control | Built into MicroPython |
+| `network` | Wi-Fi management | Built into MicroPython |
+| `requests` | HTTP POST to Firebase | `urequests` / MicroPython |
+| `i2c_lcd` | I²C LCD driver | Third-party MicroPython lib |
+| `ubinascii` | Base64 encoding for SMTP auth | Built into MicroPython |
+| `umail` | SMTP email client | Included in this project |
+
+---
+
+## Project Structure
+
 ```
-ESP32 Pin Mapping:
-- GPIO13: DHT11 (Temperature/Humidity Sensor)
-- GPIO14: Buzzer
-- GPIO5: I2C SCL (LCD)
-- GPIO4: I2C SDA (LCD)
-- GPIO0: ADC0 (Air Quality Sensor)
+📁 project-root/
+├── fire_test.py       # Main entry point — orchestrates all modules
+├── air_quality.py     # MQ sensor reader — returns air quality %
+├── DHT11.py           # DHT11 reader — returns temp, humidity, buzzer control
+├── connection.py      # Wi-Fi connection helper
+├── umail.py           # Lightweight SMTP email client for MicroPython
+└── README.md          # This file
 ```
 
-**Key Functions**:
-- `send_firebase(temp, hum, fer, air)`: Sends sensor data to Firebase
-  - Collects current timestamp
-  - Creates JSON payload with temperature, humidity, air quality
-  - Posts data to Firebase Realtime Database
+---
 
-**Workflow**:
-1. Reads temperature, humidity, and Fahrenheit from DHT sensor
-2. Connects to WiFi network
-3. Continuously loops:
-   - Reads air quality percentage
-   - Displays Temperature and Humidity on LCD
-   - Prints data to console
-   - Uploads to Firebase
-   - Waits 2 seconds before next cycle
+## Module Documentation
 
-**Firebase Data Structure**:
+### `air_quality.py`
+
+Reads the analog output of an MQ-series gas/air-quality sensor connected to **ADC pin 0**.
+
+#### Functions
+
+---
+
+#### `per(x, in_min, in_max, out_min, out_max) → float`
+
+A general-purpose linear interpolation (map) function. Converts a raw ADC value from one range to another.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `x` | `int` | The raw input value to convert |
+| `in_min` | `int` | Minimum of the input range |
+| `in_max` | `int` | Maximum of the input range |
+| `out_min` | `int` | Minimum of the output range |
+| `out_max` | `int` | Maximum of the output range |
+
+**Returns:** `float` — the mapped value.
+
+---
+
+#### `air() → int`
+
+Reads the ADC, maps the raw value (0–1023) to a percentage (0–100), waits 1 second, and returns the air quality percentage.
+
+> ⚠️ **Note:** The ADC read range is mapped from `0–1023`. If your board returns 12-bit ADC values (0–4095), update `in_max` to `4095` inside this function.
+
+**Returns:** `int` — air quality as a percentage (0 = clean, 100 = heavily polluted).
+
+**Example:**
+```python
+from air_quality import air
+quality = air()
+print(f"Air Quality: {quality}%")
+```
+
+---
+
+### `DHT11.py`
+
+Interfaces with the DHT11 sensor on **GPIO Pin 12** and controls a **buzzer on GPIO Pin 14**.
+
+#### Pin Assignments
+
+| Signal | GPIO Pin |
+|---|---|
+| DHT11 Data | 12 |
+| Buzzer | 14 |
+
+#### Functions
+
+---
+
+#### `dht_data() → tuple(int, int, float)`
+
+Triggers a DHT11 measurement, computes Fahrenheit, activates/deactivates the buzzer based on thresholds, waits 1 second, and returns the readings.
+
+**Returns:** `(temp_C, humidity, temp_F)`
+
+| Return Value | Type | Description |
+|---|---|---|
+| `temp` | `int` | Temperature in Celsius |
+| `hum` | `int` | Relative humidity in % |
+| `temp_f` | `float` | Temperature in Fahrenheit |
+
+**Buzzer Logic:**
+
+| Condition | Buzzer State |
+|---|---|
+| `temp > 30°C` | ON 🔔 |
+| `hum > 90%` | ON 🔔 |
+| `hum < 30%` | ON 🔔 |
+| All values normal | OFF |
+
+**Example:**
+```python
+from DHT11 import dht_data
+temp, hum, temp_f = dht_data()
+print(f"Temp: {temp}°C / {temp_f}°F, Humidity: {hum}%")
+```
+
+---
+
+### `connection.py`
+
+Manages Wi-Fi connectivity for the ESP32/ESP8266.
+
+#### Functions
+
+---
+
+#### `do_connect() → None`
+
+Activates the station interface, connects to the configured Wi-Fi network, and blocks until a connection is established. Prints the assigned IP address on success.
+
+> ✏️ **Modify the SSID and password** inside `fire_test.py` (see [Configuration](#configuration)).
+
+**Example:**
+```python
+import connection
+connection.do_connect()
+```
+
+---
+
+### `umail.py`
+
+A minimal MicroPython SMTP client. Supports **SSL (port 465)** and **STARTTLS**, with **PLAIN** and **LOGIN** authentication — both compatible with Gmail App Passwords.
+
+> Original source: [uMail by Shawwwn](https://github.com/shawwwn/uMail) — MIT License.
+
+#### Class: `SMTP`
+
+---
+
+#### `SMTP.__init__(host, port, ssl=False, username=None, password=None)`
+
+Opens a TCP/SSL socket to the SMTP server and performs the initial `EHLO` handshake.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `host` | `str` | — | SMTP server hostname |
+| `port` | `int` | — | SMTP port (e.g. `465` for SSL) |
+| `ssl` | `bool` | `False` | Enable SSL wrapping |
+| `username` | `str` | `None` | Optional — login on init |
+| `password` | `str` | `None` | Optional — login on init |
+
+---
+
+#### `SMTP.login(username, password) → (code, resp)`
+
+Authenticates with the server using PLAIN or LOGIN method.
+
+---
+
+#### `SMTP.to(addrs, mail_from=None) → (code, resp)`
+
+Sets the sender and one or more recipients, then sends the `DATA` command to begin message body writing.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `addrs` | `str` or `list` | Recipient email(s) |
+| `mail_from` | `str` | Sender override (defaults to logged-in username) |
+
+---
+
+#### `SMTP.write(content) → None`
+
+Writes raw content to the open SMTP socket. Call multiple times to build the email body.
+
+---
+
+#### `SMTP.send(content='') → (code, message)`
+
+Terminates the email with `\r\n.\r\n` and signals the server to deliver it.
+
+---
+
+#### `SMTP.quit() → None`
+
+Sends `QUIT` and closes the socket connection cleanly.
+
+**Full email example:**
+```python
+import umail
+smtp = umail.SMTP('smtp.gmail.com', 465, ssl=True)
+smtp.login('you@gmail.com', 'your_app_password')
+smtp.to('recipient@example.com')
+smtp.write("From: ESP32 <you@gmail.com>\n")
+smtp.write("Subject: Sensor Alert\n")
+smtp.write("Temperature is above 30°C!")
+smtp.send()
+smtp.quit()
+```
+
+---
+
+### `fire_test.py`
+
+The **main program file**. Flash this as `main.py` on the device to run automatically on boot.
+
+#### Execution Flow
+
+```
+Boot
+ └─► do_connect()          # Connect to Wi-Fi
+      └─► loop forever:
+           ├─► air()            # Read air quality
+           ├─► dht_data()       # Read temp + humidity
+           ├─► LCD display      # Show readings on screen
+           ├─► print()          # Serial console output
+           ├─► send_firebase()  # POST data to Firebase
+           └─► Send email       # SMTP email via umail
+```
+
+#### Internal Functions
+
+---
+
+#### `send_firebase(temp, hum, fer, air) → None`
+
+Builds a timestamped JSON payload and HTTP POSTs it to the Firebase Realtime Database endpoint.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `temp` | `int` | Temperature in Celsius |
+| `hum` | `int` | Humidity % |
+| `fer` | `float` | Temperature in Fahrenheit |
+| `air` | `int` | Air quality % |
+
+**Firebase endpoint:**
+```
+https://air-quality-80aa6-default-rtdb.firebaseio.com/Gas_DHT11.json
+```
+
+---
+
+## Circuit Connections
+
+```
+ESP32 / ESP8266 Pin Layout
+─────────────────────────────────────────────
+DHT11 sensor:
+  VCC  ──► 3.3V
+  GND  ──► GND
+  DATA ──► GPIO 12
+
+MQ Gas Sensor (Analog):
+  VCC  ──► 3.3V / 5V
+  GND  ──► GND
+  AOUT ──► ADC0 (A0)
+
+Active Buzzer:
+  (+)  ──► GPIO 14
+  (-)  ──► GND
+
+I²C LCD (PCF8574 backpack):
+  VCC  ──► 3.3V / 5V
+  GND  ──► GND
+  SDA  ──► GPIO 4
+  SCL  ──► GPIO 5
+─────────────────────────────────────────────
+```
+
+---
+
+## Configuration
+
+All user-configurable values live at the **top of `fire_test.py`**:
+
+```python
+# ── Wi-Fi ──────────────────────────────────────
+ssid              = 'YOUR_WIFI_SSID'
+password          = 'YOUR_WIFI_PASSWORD'
+
+# ── Email ──────────────────────────────────────
+sender_email      = 'your_sender@gmail.com'
+sender_name       = 'ESP32'
+sender_app_password = 'xxxx xxxx xxxx xxxx'   # Gmail App Password
+recipient_email   = 'recipient@gmail.com'
+email_subject     = 'Air Quality Report'
+
+# ── LCD ────────────────────────────────────────
+I2C_ADDR          = 0x27    # Change to 0x3F if LCD not found
+totalRows         = 2
+totalColumns      = 16
+
+# ── Firebase ───────────────────────────────────
+# Edit the URL inside send_firebase() to point to your own project
+api = "https://<YOUR-PROJECT>.firebaseio.com/Gas_DHT11.json"
+```
+
+---
+
+## Firebase Setup
+
+1. Go to [Firebase Console](https://console.firebase.google.com/) and create a new project.
+2. Navigate to **Build → Realtime Database** and create a database.
+3. Set Rules to allow writes (for testing):
+   ```json
+   {
+     "rules": {
+       ".read": "auth != null",
+       ".write": true
+     }
+   }
+   ```
+4. Copy your database URL and replace the `api` variable in `send_firebase()`.
+
+Each record pushed will look like:
+
 ```json
 {
   "Temperature": 28,
-  "Humidity": 65,
+  "DHT11": 65,
   "Temp_F": 82.4,
-  "Abnormal_Air": 45,
-  "date": "19/3/2026",
-  "time": "14:30:45"
+  "Abnormal_Air": 42,
+  "date": "24/3/2026",
+  "time": "10:30:15"
 }
 ```
 
 ---
 
-### 2. **Humidity.py** (DHT11 Sensor Module)
-**Purpose**: Handles temperature and humidity measurements from the DHT11 sensor.
+## Email Setup
 
-**Key Features**:
-- Initializes DHT11 sensor on GPIO13
-- Measures temperature in Celsius
-- Measures humidity percentage
-- Calculates Fahrenheit temperature
-- Triggers buzzer alert for abnormal conditions
-- Implements 1-second delay between measurements
+This project uses **Gmail SMTP** with an App Password (not your regular Gmail password).
 
-**Hardware**:
-- DHT11 Sensor connected to GPIO13
-- Buzzer connected to GPIO14
+1. Enable **2-Step Verification** on your Google account.
+2. Go to **Google Account → Security → App Passwords**.
+3. Create a new App Password (select "Mail" and "Other (custom name)").
+4. Copy the 16-character password into `sender_app_password` in `fire_test.py`.
 
-**Key Function**: `dht_data()`
-
-**Returns**:
-- `temp`: Temperature in Celsius
-- `hum`: Humidity percentage
-- `temp_f`: Temperature in Fahrenheit (calculated as: (C × 9/5) + 32)
-
-**Alert Conditions**:
-- Temperature > 30°C
-- Humidity > 90%
-- Humidity < 30%
-
-**Buzzer Behavior**:
-- Activates (HIGH) when alert condition is met
-- Deactivates (LOW) when conditions are normal
+> 🔒 **Security note:** Never commit real credentials to a public repository. Consider storing credentials in a separate `config.py` that is excluded from version control.
 
 ---
 
-### 3. **air_quality.py** (Air Quality Sensor Module)
-**Purpose**: Reads and processes analog air quality sensor (MQ-135) data.
+## How It Works
 
-**Key Features**:
-- Reads raw ADC values from air quality sensor
-- Converts raw analog values to percentage (0-100%)
-- Implements calibration mapping from sensor range to percentage scale
-- 1-second delay between readings
-
-**Hardware**:
-- MQ-135 Air Quality Sensor connected to ADC0 (GPIO36)
-
-**Key Function**: `per(x, in_min, in_max, out_min, out_max)`
-- Maps input value from one range to another
-- **Formula**: `(x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min`
-- **Used for**: Converting raw ADC readings (0-4095) to percentage (0-100%)
-
-**Key Function**: `air()`
-- Reads raw sensor value from ADC
-- Converts to percentage (0-100%)
-- Returns integer percentage value
-
-**Calibration**:
-- Input range: 0-1023 (raw ADC values)
-- Output range: 0-100 (percentage)
-
----
-
-### 4. **connection.py** (WiFi Connection Module)
-**Purpose**: Manages WiFi connectivity for the microcontroller.
-
-**Key Features**:
-- Establishes connection to WiFi network
-- Handles connection retries with status feedback
-- Displays network configuration details
-- Provides reusable connection function
-
-**WiFi Configuration**:
-```python
-SSID: "suman"
-Password: "12345678"
+```
+┌─────────────┐     ADC read      ┌──────────────────┐
+│  MQ Sensor  │ ────────────────► │  air_quality.py  │ ── air quality % ──┐
+└─────────────┘                   └──────────────────┘                    │
+                                                                           ▼
+┌─────────────┐    GPIO read      ┌──────────────────┐             ┌─────────────┐
+│   DHT11     │ ────────────────► │    DHT11.py      │ ─ T, H, F ─►│ fire_test   │
+└─────────────┘                   └──────────────────┘             │  .py (main) │
+                                                                    └──────┬──────┘
+┌─────────────┐    I²C write      ┌──────────────────┐                    │
+│  16x2 LCD   │ ◄──────────────── │  i2c_lcd lib     │ ◄──────────────────┤
+└─────────────┘                   └──────────────────┘                    │
+                                                                           │
+┌─────────────┐   HTTP POST       ┌──────────────────┐                    │
+│  Firebase   │ ◄──────────────── │  requests lib    │ ◄──────────────────┤
+└─────────────┘                   └──────────────────┘                    │
+                                                                           │
+┌─────────────┐   SMTP / SSL      ┌──────────────────┐                    │
+│   Gmail     │ ◄──────────────── │    umail.py      │ ◄──────────────────┘
+└─────────────┘                   └──────────────────┘
 ```
 
-**Key Function**: `do_connect()`
-- Activates WiFi (STA mode)
-- Checks if already connected
-- Attempts connection with provided credentials
-- Displays status dots while connecting
-- Prints assigned IP address after successful connection
-
-**Status Output**:
-- Shows "connecting to network..."
-- Prints dots (.) for each connection attempt
-- Displays assigned IPv4 address upon successful connection
-
 ---
 
-### 5. **lcd_api.py** (LCD API - HD44780 Controller)
-**Purpose**: Provides high-level API for communicating with HD44780 compatible character LCDs.
+## Data Format
 
-**Key Features**:
-- Abstract API independent of hardware communication method
-- HD44780 command set implementation
-- Cursor and display control
-- Backlight management
-- Custom character support (CGRAM)
-- Display positioning and text output
-
-**Main Class**: `LcdApi`
-
-**Key Constants** (HD44780 Commands):
-- `LCD_CLR`: Clear display
-- `LCD_HOME`: Return to home position
-- `LCD_ENTRY_MODE`: Set entry mode (increment/shift)
-- `LCD_ON_CTRL`: Turn LCD/cursor on/off
-- `LCD_FUNCTION`: Function set (8-bit/4-bit, lines, font)
-- `LCD_CGRAM`: Set CG RAM address
-- `LCD_DDRAM`: Set DD RAM address
-
-**Key Methods**:
-- `clear()`: Clear display and reset cursor to (0,0)
-- `show_cursor()` / `hide_cursor()`: Toggle cursor visibility
-- `blink_cursor_on()` / `blink_cursor_off()`: Toggle cursor blinking
-- `display_on()` / `display_off()`: Toggle display visibility
-- `backlight_on()` / `backlight_off()`: Control backlight
-- `move_to(cursor_x, cursor_y)`: Position cursor at (x, y)
-- `putchar(char)`: Write single character
-- `putstr(string)`: Write string to LCD
-- `custom_char(location, charmap)`: Define custom character
-
-**Display Specifications**:
-- Supports up to 4 lines (limited to 40 columns)
-- 2-line 16-column display used in this project
-- Automatic line wrapping and cursor advance
-
----
-
-### 6. **i2c_lcd.py** (I2C LCD Interface - HD44780 via PCF8574)
-**Purpose**: Implements HD44780 LCD control via I2C using PCF8574 I2C expander.
-
-**Key Features**:
-- HD44780 LCD control through PCF8574 I2C backpack
-- 4-bit mode operation
-- I2C communication at 10kHz frequency
-- Backlight control via I2C pin
-- Memory management with garbage collection
-
-**Hardware**:
-- LCD connected to PCF8574 I2C expander (address: 0x27)
-- I2C interface on ESP32: SCL=GPIO5, SDA=GPIO4
-- 2x16 character display
-
-**PCF8574 Pin Mapping**:
+### Serial Console Output (every cycle)
 ```
-P0 (MASK_RS = 0x01): Register Select
-P1 (MASK_RW = 0x02): Read/Write Select
-P2 (MASK_E = 0x04):  Enable Signal
-P3 (SHIFT_BACKLIGHT = 3): Backlight Control
-P4-P7 (SHIFT_DATA = 4): Data Lines (4-bit mode)
+Today Weather and Gas Level Update from Air :
+Temp_C  -> 27°C
+Temp_F  -> 80.6F
+Abnormal_Air --> 35%
+Hum     --> 68%
 ```
 
-**Main Class**: `I2cLcd(LcdApi)`
+### LCD Output
+```
+┌────────────────┐
+│ Temp.:27C      │
+│ Hum:68% Air:35 │
+└────────────────┘
+```
 
-**Initialization Process**:
-1. Send initial zero byte to I2C address
-2. Wait 20ms for LCD powerup
-3. Send reset command 3 times (4.1ms delays)
-4. Switch to 4-bit mode
-5. Initialize as 2-line display
-
-**Key Methods**:
-- `hal_write_init_nibble(nibble)`: Send initialization nibble
-- `hal_backlight_on()`: Enable backlight via I2C
-- `hal_backlight_off()`: Disable backlight via I2C
-- `hal_write_command(cmd)`: Send command in 4-bit mode
-- `hal_write_data(data)`: Send data in 4-bit mode
-
-**4-bit Mode Operation**:
-- Transfers commands and data in two 4-bit transfers
-- High nibble sent first, then low nibble
-- Enable signal (MASK_E) pulses for each nibble
-
-**Timing**:
-- Clear/Home commands: 5ms delay
-- Other operations: Variable delay with garbage collection
+### Email Body
+```
+Today Weather and Gas Level Update from Air :
+Temp_C  -> 27°C
+Temp_F  -> 80.6F
+Abnormal_Air --> 35%
+Hum     --> 68%
+```
 
 ---
 
-## 🔧 Dependencies
+## Alerts & Thresholds
 
-### Required Libraries:
-- `machine`: MicroPython hardware interface
-- `network`: WiFi connectivity
-- `time` / `utime`: Time operations
-- `requests`: HTTP POST requests to Firebase
-- `dht`: DHT11 sensor driver
-- `gc`: Garbage collection
+| Sensor | Parameter | Threshold | Action |
+|---|---|---|---|
+| DHT11 | Temperature | > 30 °C | Buzzer ON |
+| DHT11 | Humidity | > 90 % | Buzzer ON |
+| DHT11 | Humidity | < 30 % | Buzzer ON |
+| MQ Sensor | Air Quality | — | Logged only (no auto-alert) |
 
-### External APIs:
-- **Firebase Realtime Database**: 
-  - Endpoint: `https://air-quality-80aa6-default-rtdb.firebaseio.com/air_quality_measure.json`
+> 💡 You can extend the alerting logic in `DHT11.py` by modifying the `if/else` block inside `dht_data()`.
 
 ---
 
-## 🚀 How to Use
+## Known Issues & Limitations
 
-### 1. Hardware Setup
-- Connect DHT11 sensor to GPIO13
-- Connect MQ-135 air quality sensor to GPIO36 (ADC0)
-- Connect Buzzer to GPIO14
-- Connect I2C LCD (PCF8574 address 0x27) to GPIO4 (SDA) and GPIO5 (SCL)
-
-### 2. Configuration
-- Update WiFi credentials in `connection.py` (SSID and password)
-- Verify Firebase endpoint URL in `fire_test.py`
-- Adjust alert thresholds in `Humidity.py` if needed
-
-### 3. Upload and Run
-- Upload all Python files to microcontroller
-- Execute `fire_test.py`
-- Monitor console for connection and data upload status
-- Data will appear on LCD display
-- Cloud data stored in Firebase
-
-### 4. Monitoring
-- Check Firebase console for real-time data
-- LCD displays current temperature and air quality
-- Console prints detailed sensor readings
-- Buzzer alerts on abnormal conditions
+| Issue | Details |
+|---|---|
+| **Email on every cycle** | An email is sent every loop iteration, which may trigger Gmail rate limits quickly. Consider adding a counter or time check to send emails only when thresholds are breached or at set intervals. |
+| **ADC range mismatch** | `air_quality.py` maps to `0–1023` but ESP32 ADC is 12-bit (`0–4095`). Update `in_max` in `per()` to `4095` for accurate readings on ESP32. |
+| **Hardcoded credentials** | Wi-Fi and email credentials are stored in plain text. Use a `secrets.py` or `config.py` file and add it to `.gitignore`. |
+| **NTP not configured** | Timestamps rely on `time.localtime()`, which may return incorrect values without NTP sync. Add `ntptime.settime()` after connecting to Wi-Fi. |
+| **No retry on email failure** | If the SMTP connection fails, the main loop will crash. Wrap the email block in a `try/except`. |
+| **Firebase write rules** | Open write rules are insecure for production. Add Firebase Authentication before deploying. |
 
 ---
 
-## ⚙️ Configuration Parameters
+## License
 
-| Parameter | Value | Location |
-|-----------|-------|----------|
-| DHT Sensor Pin | GPIO13 | Humidity.py |
-| Buzzer Pin | GPIO14 | Humidity.py |
-| ADC Sensor Pin | GPIO0/36 | air_quality.py |
-| I2C SCL | GPIO5 | fire_test.py |
-| I2C SDA | GPIO4 | fire_test.py |
-| I2C Address | 0x27 | fire_test.py |
-| LCD Rows | 2 | fire_test.py |
-| LCD Columns | 16 | fire_test.py |
-| WiFi SSID | "suman" | connection.py |
-| WiFi Password | "12345678" | connection.py |
-| Data Upload Interval | 2 seconds | fire_test.py |
-
----
-
-## 🚨 Alert Thresholds
-
-| Condition | Threshold | Action |
-|-----------|-----------|--------|
-| High Temperature | > 30°C | Buzzer ON |
-| High Humidity | > 90% | Buzzer ON |
-| Low Humidity | < 30% | Buzzer ON |
-| Normal Conditions | All OK | Buzzer OFF |
-
----
-
-## 🐛 Troubleshooting
-
-### WiFi Connection Issues
-- Verify SSID and password in `connection.py`
-- Check microcontroller is in range of WiFi network
-- Monitor console output for connection status
-
-### Sensor Reading Issues
-- Verify pin connections match configuration
-- Ensure sensors are powered correctly
-- Check for loose connections
-
-### Firebase Upload Failures
-- Verify internet connection
-- Check Firebase endpoint URL
-- Ensure database has write permissions
-
-### LCD Display Issues
-- Verify I2C address (default 0x27)
-- Check SCL/SDA pin connections
-- Confirm I2C frequency is set to 10kHz
-
----
-
-## 📝 License
-
-This project is for IoT environmental monitoring and educational purposes.
-
----
-
-## 👤 Author
-
-Created by: Suman-Gayen
+- `umail.py` — MIT License © 2018 [Shawwwn](https://github.com/shawwwn/uMail)
+- All other files — MIT License © 2025 Project Contributors
